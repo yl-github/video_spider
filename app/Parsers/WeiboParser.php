@@ -2,69 +2,58 @@
 
 namespace App\Parsers;
 
-use App\Utils\Common;
-use App\Services\CookieManager;
+use App\Utils\CookieManager;
+use App\Utils\UserAgent;
 
+/**
+ * 微博视频解析器
+ */
 class WeiboParser extends BaseParser
 {
-    protected static function getHeaders()
+    protected static function getHeaders(): array
     {
-        $cookie = CookieManager::getInstance()->getCookie('weibo');
-
-        if (empty($cookie)) {
-            return self::error(400, '请先设置微博 cookie');
+        if (!CookieManager::has('weibo')) {
+            throw new \RuntimeException('请先设置微博 cookie');
         }
 
         return [
-            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36',
-            'Referer: https://weibo.com/',
-            'Cookie: ' . $cookie
+            'User-Agent' => UserAgent::desktop(),
+            'Referer' => 'https://weibo.com/',
+            'Cookie' => CookieManager::get('weibo')
         ];
     }
 
-    public static function parse($url)
+    public static function parse(string $url): array
     {
-        if (strpos($url, 'show?fid=')) {
-            preg_match('/fid=(.*)/', $url, $id);
-        } else {
-            preg_match('/\d+\:\d+/', $url, $id);
+        self::getHeaders();
+
+        $pattern = strpos($url, 'show?fid=') !== false ? '/fid=(.*)/' : '/\d+\:\d+/';
+        if (!preg_match($pattern, $url, $match)) {
+            throw new \InvalidArgumentException('无法解析视频 ID');
         }
 
-        if (count($id) < 1) {
-            return self::error(400, '无法解析视频 ID');
+        $cid = $match[1] ?? $match[0];
+        $postData = 'data=' . json_encode(['Component_Play_Playinfo' => ['oid' => $cid]]);
+        
+        $result = self::fetch("https://weibo.com/tv/api/component?page=/tv/show/{$cid}", $postData);
+
+        $data = self::parseJson($result['data']);
+        $item = $data['data']['Component_Play_Playinfo'] ?? null;
+        if (!$item || empty($item['urls'])) {
+            throw new \RuntimeException('视频数据解析失败');
         }
 
-        $cid = $id[1] ?? $id[0];
-        $data = 'data={"Component_Play_Playinfo":{"oid":"' . $cid . '"}}';
-
-        $arr = Common::getCurl("https://weibo.com/tv/api/component?page=/tv/show/{$cid}", $data, self::getHeaders());
-        $data = json_decode($arr, true);
-        $item = $data['data']['Component_Play_Playinfo'];
-
-        if (!$item) {
-            return self::error(500, '视频数据解析失败');
+        $videoUrl = is_array($item['urls']) ? $item['urls'][key($item['urls'])] : $item['urls'];
+        if (!$videoUrl) {
+            throw new \RuntimeException('未找到视频 URL');
         }
-
-        $video_url = $item['urls'];
-
-        if ($video_url) {
-            return self::success([
-                'title' => $item['title'],
-                'author' => $item['author'],
-                'avatar' => self::fixUrl($item['avatar']),
-                'time' => $item['real_date'],
-                'cover' => self::fixUrl($item['cover_image']),
-                'url' => self::fixUrl($video_url[key($video_url)])
-            ]);
-        }
-        return self::error(201, '未找到视频URL');
-    }
-
-    private static function fixUrl($url)
-    {
-        if (strpos($url, 'http') === 0) {
-            return $url;
-        }
-        return 'https:' . $url;
+        return [
+            'title' => $item['title'] ?? '',
+            'author' => $item['author'] ?? '',
+            'avatar' => isset($item['avatar']) ? self::fixUrl($item['avatar']) : '',
+            'time' => $item['real_date'] ?? '',
+            'cover' => isset($item['cover_image']) ? self::fixUrl($item['cover_image']) : '',
+            'url' => self::fixUrl($videoUrl)
+        ];
     }
 }

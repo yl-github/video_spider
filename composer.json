@@ -2,6 +2,7 @@
     "name": "5ime/video_spider",
     "description": "一款高效的短视频去水印下载工具。",
     "type": "project",
+    "version": "1.1.0",
     "license": "AGPL-3.0",
     "authors": [
         {
@@ -9,6 +10,10 @@
             "email": "me@5ime.cn"
         }
     ],
+    "require": {
+        "php": ">=7.3.0",
+        "vlucas/phpdotenv": "^5.6"
+    },
     "autoload": {
         "psr-4": {
             "App\\": "app/"
